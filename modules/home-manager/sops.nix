@@ -195,46 +195,50 @@ in {
     };
   };
 
-  config = lib.mkIf (cfg.secrets != {}) {
-    assertions = [{
-      assertion = cfg.gnupg.home != null || cfg.gnupg.sshKeyPaths != [] || cfg.age.keyFile != null || cfg.age.sshKeyPaths != [];
-      message = "No key source configurated for sops";
-    } {
-      assertion = !(cfg.gnupg.home != null && cfg.gnupg.sshKeyPaths != []);
-      message = "Exactly one of sops.gnupg.home and sops.gnupg.sshKeyPaths must be set";
-    }] ++ lib.optionals cfg.validateSopsFiles (
-      lib.concatLists (lib.mapAttrsToList (name: secret: [{
-        assertion = builtins.pathExists secret.sopsFile;
-        message = "Cannot find path '${secret.sopsFile}' set in sops.secrets.${lib.strings.escapeNixIdentifier name}.sopsFile";
+  config = lib.mkIf (cfg.secrets != {}) (lib.mkMerge [
+    {
+      assertions = [{
+        assertion = cfg.gnupg.home != null || cfg.gnupg.sshKeyPaths != [] || cfg.age.keyFile != null || cfg.age.sshKeyPaths != [];
+        message = "No key source configurated for sops";
       } {
-        assertion =
-          builtins.isPath secret.sopsFile ||
-          (builtins.isString secret.sopsFile && lib.hasPrefix builtins.storeDir secret.sopsFile);
-        message = "'${secret.sopsFile}' is not in the Nix store. Either add it to the Nix store or set sops.validateSopsFiles to false";
-      }]) cfg.secrets)
-    );
-
-    systemd.user.services.sops-nix = {
-      Unit = {
-        Description = "sops-nix activation";
-      };
-      Service = {
-        Type = "oneshot";
-        ExecStart = script;
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
-
-    launchd.agents.sops-nix = {
-      enable = true;
-      config = {
-        ProgramArguments = [ script ];
-        KeepAlive = {
-          Crashed = false;
-          SuccessfulExit = false;
+        assertion = !(cfg.gnupg.home != null && cfg.gnupg.sshKeyPaths != []);
+        message = "Exactly one of sops.gnupg.home and sops.gnupg.sshKeyPaths must be set";
+      }] ++ lib.optionals cfg.validateSopsFiles (
+        lib.concatLists (lib.mapAttrsToList (name: secret: [{
+          assertion = builtins.pathExists secret.sopsFile;
+          message = "Cannot find path '${secret.sopsFile}' set in sops.secrets.${lib.strings.escapeNixIdentifier name}.sopsFile";
+        } {
+          assertion =
+            builtins.isPath secret.sopsFile ||
+            (builtins.isString secret.sopsFile && lib.hasPrefix builtins.storeDir secret.sopsFile);
+          message = "'${secret.sopsFile}' is not in the Nix store. Either add it to the Nix store or set sops.validateSopsFiles to false";
+        }]) cfg.secrets)
+      );
+    }
+    (lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+      systemd.user.services.sops-nix = {
+        Unit = {
+          Description = "sops-nix activation";
         };
-        ProcessType = "Background";
+        Service = {
+          Type = "oneshot";
+          ExecStart = script;
+        };
+        Install.WantedBy = [ "default.target" ];
       };
-    };
-  };
+    })
+    (lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
+      launchd.agents.sops-nix = {
+        enable = true;
+        config = {
+          ProgramArguments = [ script ];
+          KeepAlive = {
+            Crashed = false;
+            SuccessfulExit = false;
+          };
+          ProcessType = "Background";
+        };
+      };
+    })
+  ]);
 }
